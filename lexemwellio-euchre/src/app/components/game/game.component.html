@@ -1,0 +1,18 @@
+<div>
+    <h2>Enter Player Names</h2>
+    <form (ngSubmit)="startGame(playerNames)">
+        @for (player of playerNames; track $index) {
+            <label for="player1">Player {{$index + 1}}:</label>
+            <input 
+            type="text"
+            [id]="'player' + $index"
+            [(ngModel)]="playerNames[$index]"
+            [name]="'player' + $index"
+            required
+            placeholder="Enter name for Player {{ $index + 1 }}"
+            /><br/> 
+        }
+      <button type="submit">Start Game</button>
+    </form>
+  </div>
+  
