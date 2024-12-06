@@ -1,4 +1,5 @@
 import { Injectable } from "@angular/core";
+import { outputToObservable } from "@angular/core/rxjs-interop";
 
 
 export interface Card {
@@ -7,38 +8,38 @@ export interface Card {
     photo: string;
 }
 
-export interface Player {
+//stores a Player name and index
+interface Player {
     name: string;
     index: number;
 }
 
-// this interface keeps track of the cards played in a trick
-// and who wins the trick
-export interface Trick {
-  cardsPlayed: [Card|null, Card|null, Card|null, Card|null];
-  cardLed: Card | null;
-  winner: Player | null;
-}
+// this interface keeps track of the cards played in a trick and who led the trick and with what
+interface Trick {
+  cardsPlayed: [Card|null, Card|null, Card|null, Card|null]; //cards played, index corresponds to player
+  leadPlayer: Player|null; //player who played first card
+  cardLed: Card | null; //card led
+} 
 
-// this interfaces keeps track of one round (5 tricks)
+// this interfaces keeps track of one round. it also contains the current trick
 export interface Round {
-  hands: Card[][]; 
-  kittyCard: Card;
-  dealer: Player;
-  caller: Player | null;
-  outPlayer: Player | null;
-  trumpSuit:  Card["suit"] | null;
-  trickCounter: number;
-  currentTrick: Trick;
-  tricknnnsWon: [number, number];
+  hands: [Card[], Card[], Card[], Card[],]; //player hands,index corresponds to player
+  kittyCard: Card; // card used in first round of determining trump
+  dealer: Player; //who dealt the cards 
+  caller: Player | null; //person who calls trump (used to determine someone gets euchred)
+  outPlayer: Player | null; // if someone goes alone, this is their partner, they will not play in the round
+  trumpSuit:  Card["suit"] | null; 
+  trickCounter: number; //how many tricks have been completed. always <5 (first trick is 0)
+  currentTrick: Trick; //state of current trick
+  tricksWon: [number, number]; //score within round, for teams 0 and 1
 }
 
 // this interface keeps the state of the game
 export interface Game {
-  players: Player[];
-  roundCounter: number;
-  currentRound:Round;
-  roundsWon: [number, number];
+  players: Player[]; //stores players in game
+  roundCounter: number; //how many rounds have been completed
+  currentRound:Round; //state of current round
+  score: [number, number]; //game score, for teams 0 and 1
 }
 
 @Injectable({
@@ -72,46 +73,47 @@ export class GameService {
   }
 
   //create the hands and designate kitty card
-  private dealCards(deck: Card[]) {
-    const hands: Card[][] = Array.from({ length: 4 }, () => []);
+  private dealCards() {
+    const deck = this.shuffleDeck(this.createDeck());
+
+    //deal to hands
+    const hands:[Card[],Card[],Card[],Card[],] = [[],[],[],[]];
     for (let i = 0; i < 5; i++) {
       for (let j = 0; j < 4; j++) {
-        hands[j].push(deck.pop()!);
+        hands[j]!.push(deck.pop()!);
       }
     }
+
+    //set kitty card
     const kittyCard = deck.pop()!;
     return { hands, kittyCard };
   }
 
+  // creates a new trick with all values initialized to null
   createTrick() {
-    const trick = { 
+    return { 
       cardsPlayed: [null, null, null, null] as [Card | null, Card | null, Card | null, Card | null],
+      leadPlayer: null,
       cardLed: null,
-      winner: null,
-    }
-    return trick;
+    };
   }
 
-  // create instance of round interface, deal cards to players
+  // creates new round, deal cards to players
   createRound(dealer: Player): Round {
-    // Shuffle the deck before starting the round
-    const shuffledDeck = this.shuffleDeck(this.createDeck());
+    // distribute cards to hand and kitty
+    const { hands, kittyCard } = this.dealCards();
 
-    // Distribute the cards to the players" hands (5 cards each)
-    const { hands, kittyCard } = this.dealCards(shuffledDeck);
-    const currentTrick = this.createTrick();
-    const round: Round = {
+    return {
       hands, 
       kittyCard, 
-      dealer, 
+      dealer, //input of function
       caller: null,
       outPlayer: null,
       trumpSuit: null, 
       trickCounter: 0, 
-      currentTrick, 
+      currentTrick: this.createTrick(), 
       tricksWon: [0, 0], 
     };
-    return round;
   }
 
   // Initialize the game
@@ -121,31 +123,25 @@ export class GameService {
     }
 
     // Create players with the input names
-    const players: Player[] = playerNames.map((name, index) => ({
+    const players= playerNames.map((name, index) => ({
       name,
       index,
-    }));
-
-    //set up first round
-    const roundCounter = 0;
-    const currentRound = this.createRound(players[0]);
+    })) as [Player,Player,Player,Player];
 
     return {
       players,
-      roundCounter,
-      currentRound,
-      roundsWon: [0,0],
+      roundCounter: 0,
+      currentRound: this.createRound(players[0]),
+      score: [0,0],
     };
   }
 
-  //set the value of the trump suit in the round
-  setTrump(round:Round, trumpSuit:Card["suit"]) {
-    round.trumpSuit = trumpSuit;
-  }
-
-  //given a player index, determine which team they are on
+  
+  //given a player index, determine which team they are on 
+  // team 0: players 0 and 2
+  // team 1: players 1 and 3
   playerTeam(playerIndex:number):number {
-    if (playerIndex === 0 || playerIndex === 2) {
+    if (playerIndex % 2 === 0) {
       return 0
     } else {
       return 1
@@ -156,6 +152,7 @@ export class GameService {
   isRightBower(card:Card, trumpSuit:Card["suit"]):boolean {
     return card.rank==="J" && card.suit === trumpSuit;
   }
+
   isLeftBower(card:Card, trumpSuit:Card["suit"]) {
     if (card.rank === "J") {
       switch (card.suit) {
@@ -171,7 +168,10 @@ export class GameService {
     }
     return false;
   }
-  getCardRank(card:Card) {
+
+  getCardRank(card:Card, trumpSuit:Card['suit']) {
+    if (this.isRightBower(card, trumpSuit)) return 8;
+    if (this.isLeftBower(card, trumpSuit)) return 7;
     switch(card.rank) {
       case "A":
         return 6;
@@ -188,25 +188,44 @@ export class GameService {
     }
   }
 
+  // this checks if a card is of the trump suit, taking into account the off jack
+  isTrumpSuit(card:Card, trumpSuit:Card['suit']) {
+    return card.suit===trumpSuit || this.isLeftBower(card, trumpSuit)
+  }
+
+  // this checks if two cards are of the same suit, taking into account the off jack
+  areSameSuit(card1:Card, card2:Card, trumpSuit:Card['suit']):boolean {
+    if (this.isTrumpSuit(card1,trumpSuit)) {
+      return this.isTrumpSuit(card2, trumpSuit);
+    }
+    return card1.suit===card2.suit && !this.isTrumpSuit(card2, trumpSuit);
+  }
+
   //given a player, card, and the round, remove card from player hand
   // and add it into the played cards of the current trick
-  playCard(round:Round, player:Player, cardToPlay:Card) {
-    // Remove the card from the player"s hand
-    const cardIndex = round.hands[player.index].indexOf(cardToPlay);
+  playCard(game:Game, player:Player, cardToPlay:Card) {
+
+    const round = game.currentRound;
+    const playerHand = round.hands[player.index]!;
+    const cardToPlayIndex =playerHand.indexOf(cardToPlay);
+
     const trick = round.currentTrick;
 
+    const trumpSuit = round.trumpSuit!;
+    const cardLed = trick.cardLed!;
+
     //ensure that card is in player hand
-    if (cardIndex !== -1) {
+    if (cardToPlayIndex !== -1) {
       // if card no card has been played yet, set this as cardLed
       if (trick.cardLed === null) {
         trick.cardLed = cardToPlay;
-      // check that the player is properly following suit of cardLed
-      } else if (cardToPlay.suit !== trick.cardLed.suit){
-        if (round.hands[player.index].find((card) => {
-          card.suit === trick.cardLed!.suit && card !== cardToPlay
-        })) {
-          throw new Error("Player must follow the suit led")
-        }
+
+      // check that the player follows suit if they are able
+      } else if (
+        !this.areSameSuit(cardToPlay, cardLed, trumpSuit) && 
+        (playerHand.find((card) => this.areSameSuit(card, cardLed, trumpSuit)))
+      ){
+        throw new Error("Player must follow the suit led")
       }
     } else {
       throw new Error("Card to play not found in player\"s hand.");
@@ -214,58 +233,45 @@ export class GameService {
 
     // Add the card to the current trick, remove from hand
     trick.cardsPlayed[player.index] = cardToPlay;
-    round.hands[player.index].splice(cardIndex, 1); 
+    playerHand.splice(cardToPlayIndex, 1); 
   }
 
   //given a trick where all players have put down card, determine trick winner
-  determineTrickWinner(round:Round):number {
+  determineTrickWinner(game:Game):Player {
+    const round = game.currentRound;
     const trick = round.currentTrick;
-
-    // Check if all cards have been played
-    if (trick.cardsPlayed.includes(null)) {
-      throw new Error("All cards must be played.");
-    }
 
     const trumpSuit = round.trumpSuit!;
 
     let highestCard: Card | null = null;
     let winningPlayerIndex: number = -1;
 
+    if ( trick.cardsPlayed.find((card, index) => card === null && index !==round.outPlayer?.index)) {
+      throw new Error("Trick not complete")
+    }
+
     for(let i=0;i<4;i++) {
-      const card = trick.cardsPlayed[i]!;
-      
-      const isRight = this.isRightBower(card, trumpSuit);
-      const isLeft = this.isLeftBower(card, trumpSuit);
-      const isTrump = card?.suit === trumpSuit;
+      const card = trick.cardsPlayed[i];
 
       if (
-        highestCard===null||
-        isRight ||
-        (isLeft && !this.isRightBower(highestCard, trumpSuit)) ||
-        (isTrump && highestCard.suit !== trumpSuit) ||
-        (card?.suit === highestCard.suit && this.getCardRank(card) > getCardRank(highestCard))
-      ) {
+        card && (  //make sure new card is not null
+        highestCard===null||  //if new card is first card
+        (this.isTrumpSuit(card, trumpSuit) && !this.isTrumpSuit(highestCard, trumpSuit)) || //if new card is trump and highest is not
+        (this.areSameSuit(card, highestCard, trumpSuit) && this.getCardRank(card, trumpSuit) > this.getCardRank(highestCard, trumpSuit)) //if they are same suit, and new card is higher
+      )) {
         highestCard = card;
         winningPlayerIndex = i;
       }
     }
-    return winningPlayerIndex;
+    return game.players[winningPlayerIndex];
   }
 
-  // determineWinningTeam(winningPlayerIndex:number):number {
-  //   if (winningPlayerIndex === 0 || winningPlayerIndex === 2) {
-  //    return 0
-  //  } else {
-  //    return 1;
-  //  }
-  // }
-
-  //determine who one trick, update score, and reset to next trick
-  scoreTrick(game:Game):void {
+  // update score, and reset to next trick
+  scoreTrick(game:Game, winningPlayer:Player):void {
     const round = game.currentRound;
     const players = game.players;
     
-    const winningPlayerIndex:number = this.determineTrickWinner(round);
+    const winningPlayerIndex:number = winningPlayer.index;
   
     // Update the tricksWon array for the respective team
     if (winningPlayerIndex === 0 || winningPlayerIndex === 2) {
@@ -278,20 +284,56 @@ export class GameService {
     console.log(`Team 1 Tricks: ${round.tricksWon[0]}`);
     console.log(`Team 2 Tricks: ${round.tricksWon[1]}`);
 
+    //reset trick
     round.currentTrick = this.createTrick();
     round.trickCounter++;
   }
 
-  scoreRound(round:Round) {
+  //update score, reset round
+  scoreRound(game:Game):void {
+    const round = game.currentRound;
+
     if (round.trickCounter < 5) {
       throw new Error("Round not complete");
     }
 
+    //determine winning team
+    const winningTeam = round.tricksWon.reduce((maxIndex, curValue, curIndex, arr) => curValue > arr[maxIndex]? curIndex:maxIndex,0);
+    const tricksWon = round.tricksWon[winningTeam];
 
-    //update to allow for going alone
-    //add function to determine team of a player
-    // 
+    //update score
+    if (this.playerTeam(round.caller!.index) === winningTeam) {
+     if (tricksWon ===5) {
+      if (round.outPlayer !== null) { // caller wins all 5 tricks going alone
+        game.score[winningTeam] += 4;
+        console.log(`Team ${winningTeam} wins all five tricks with ${round.caller?.name} going alone, gets 4 points.`)
+      } else { // caller wins all five tricks together
+        game.score[winningTeam] += 2;
+        console.log(`Team ${winningTeam} wins all five tricks, gets 2 points.`)
+      }
+     } else { // caller wins majority of tricks
+      game.score[winningTeam] += 1;
+      console.log(`Team ${winningTeam} wins all ${tricksWon} tricks, gets 1 point.`)
+     }
+    } else { //noncaller wins majority of tricks
+      game.score[(winningTeam + 1)%2] += 2;
+      console.log(`Team ${winningTeam} euchred Team ${(winningTeam + 1) % 2}, winning ${tricksWon} tricks. Team ${winningTeam} gets 2 points.`)
+    }
 
-
+    //reset round, moving to next dealer
+    game.currentRound = this.createRound(game.players[(round.dealer.index + 1) % 4]);
+    game.roundCounter++;
   }
+
+  
+  //set the value of the trump suit in the round
+  setTrump(game:Game, trumpSuit:Card["suit"], caller:Player, alone:boolean) {
+    const round = game.currentRound;
+
+    round.trumpSuit = trumpSuit;
+    
+    // if caller calls go alone, not that their partner is out of play
+    if (alone) { round.outPlayer = game.players[(caller.index + 2) % 4] }
+  }
+
 }
